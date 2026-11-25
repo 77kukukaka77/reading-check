@@ -322,7 +322,7 @@ function parseInput(txt){
 }
 function judge(e,cands){
   const iv=splitVol(e.title),inBase=iv.base;
-  const scored=cands.map(b=>{const ct=splitVol(cleanTitle(b.title));const fa=fmtAuthor(b);const aIn=(e.author||'').replace(/\s*외$/,'');const aOk=!!e.author&&(norm(aIn)===norm(b.authors[0]||'')||b.authors.some(x=>norm(x)===norm(aIn)));return{b,ct,fa,ts:Math.max(sim(ct.base,inBase),sim(cleanTitle(b.title),e.title)),aOk}}).sort((x,y)=>(y.ts+(y.aOk?.3:0))-(x.ts+(x.aOk?.3:0)));
+  const scored=cands.map(b=>{const ct=splitVol(cleanTitle(b.title));const fa=fmtAuthor(b);const aIn=(e.author||'').replace(/\s*외$/,'');const aOk=!!e.author&&(norm(aIn)===norm(b.authors[0]||'')||b.authors.some(x=>norm(x)===norm(aIn)));return{b,ct,fa,ts:Math.max(sim(ct.base,inBase),sim(cleanTitle(b.title),e.title)),aOk}}).map(x=>Object.assign(x,{exact:x.ct.base===inBase,neq:norm(x.ct.base)===norm(inBase)})).sort((x,y)=>{const k=z=>(z.exact?4:0)+(z.neq?2:0)+(z.aOk?1:0)+z.ts;return k(y)-k(x)});
   const best=scored[0];
   if(!best||best.ts<0.5)return{st:'bad',tags:['찾을 수 없음'],why:'도서 검색에서 이 책을 찾지 못했어요. 도서명을 다시 확인하거나 ISBN이 있는 책인지 확인해 주세요.',alts:[]};
   const b=best.b,vol=iv.vol||'';
