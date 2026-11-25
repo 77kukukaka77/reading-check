@@ -85,6 +85,10 @@ textarea.in{resize:vertical;min-height:92px;font-size:15px}
 .note{font-size:12px;margin:6px 0 0;color:#222}
 .drop-zone{border:2px dashed #444;padding:18px;text-align:center;font-size:13px;cursor:pointer;background:#e9e9e9}
 .drop-zone strong{color:var(--bad)}
+.drop-zone{display:block}.drop-zone.over{background:var(--yel2);border-color:var(--warn)}
+.fprev{margin-top:8px;max-height:260px;overflow:auto;background:#999;text-align:center}.fprev img{max-width:100%}
+.frow{display:flex;gap:10px;align-items:center;margin:8px 0;font-size:13px;flex-wrap:wrap}
+#fOut{margin-top:4px}
 .out{min-height:240px;max-height:520px;padding:0}
 .ent{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;padding:12px;border-bottom:1px solid #777}
 .ent .ic{font-size:22px;line-height:1;text-align:center}
@@ -180,7 +184,13 @@ textarea.in{resize:vertical;min-height:92px;font-size:15px}
           <p class="note">※ <b>줄바꿈으로 학생을 구분해요.</b> (한 줄 = 한 학생, 한 학생의 책은 쉼표로 이어 쓰기)<br>※ 생기부의 <b>(1학기)</b>, <b>(2학기)</b> 표시는 그대로 둬도 돼요.</p>
         </div>
         <div id="pFile" class="hide">
-          <div class="drop-zone">사진·PDF·엑셀 입력은 <b>다음 단계</b>에서 붙일 예정이에요.<br><strong>학생 이름은 가리고 올려 주세요.</strong></div>
+          <label class="drop-zone" id="dz"><input type="file" id="fIn" accept=".xlsx,.xls,.csv,.pdf,image/*" hidden>
+            <span id="dzMsg"><b>여기를 눌러 파일을 고르거나, 끌어다 놓으세요.</b><br>사진(JPG·PNG) · PDF · 엑셀(xlsx·xls·csv) 모두 돼요. 표 안의 <b>독서활동상황</b> 칸만 골라 읽어요.<br><strong>학생 이름은 가리고 올려 주세요.</strong></span></label>
+          <div class="fprev hide" id="fPrev"></div>
+          <div class="frow"><div class="prog" id="fProg"><i></i></div><span id="fSt">파일을 기다리는 중</span></div>
+          <textarea class="in hide" id="fOut" rows="5" placeholder="읽어 온 내용이 여기에 나와요. 한 줄 = 한 학생이 되도록 고쳐 주세요."></textarea>
+          <div class="acts hide" id="fActs"><button class="b3 blue" id="fSend">♥ 점검 칸으로 보내기</button><button class="b3" id="fAgain">다른 파일</button></div>
+          <p class="note">※ 파일은 서버로 올라가지 않고 <b>이 컴퓨터 브라우저 안에서만</b> 읽어요. (사진 글자 인식은 처음에 한글 인식 자료를 내려받느라 시간이 걸려요.)<br>※ 사진 글자 인식은 틀릴 수 있어요. 읽어 온 내용을 꼭 눈으로 확인하고 고친 뒤 보내 주세요.</p>
         </div>
       </div>
       <div class="lbl">■ 점검 결과 <span class="acts"><button class="b3" id="fltC">문제만 보기</button><button class="b3" id="fixAll">⚠ 모두 고치기</button></span></div>
@@ -367,6 +377,71 @@ function renderFinal(){
   $('#finalWrap').classList.remove('hide');
 }
 
+/* ---------- 사진·PDF·엑셀 읽기 ---------- */
+const LIBS={xlsx:'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',pdf:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',pdfw:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',ocr:'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'};
+const loaded={};
+function loadLib(k){return loaded[k]||(loaded[k]=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src=LIBS[k];sc.onload=ok;sc.onerror=()=>{delete loaded[k];no(new Error('읽기 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'))};document.head.appendChild(sc)}))}
+const looksBook=l=>/\([12]학기\)/.test(l)||/[^()\s][^()]*\([^()]{1,40}\)/.test(l);
+function toStudentLines(lines){
+  const out=[];let cur='';
+  for(let l of lines){
+    l=String(l).replace(/\s+/g,' ').trim();if(!l)continue;
+    if(cur&&(!/\)\s*$/.test(cur)||/,\s*$/.test(cur))){cur+=' '+l;continue}
+    if(cur){out.push(cur);cur=''}
+    if(looksBook(l))cur=l;
+  }
+  if(cur)out.push(cur);
+  return out.map(x=>x.replace(/\s+,/g,',').replace(/,(?=\S)/g,', ').replace(/\s+/g,' ').trim());
+}
+function afterHeader(lines){const i=lines.findIndex(l=>/독서\s*활\s*동/.test(l));return i>=0?lines.slice(i+1).concat([]).map((l,k)=>k===0?l.replace(/.*독서\s*활\s*동\s*상\s*황\s*/,''):l):lines}
+function fProg(p,t){$('#fProg i').style.width=Math.round(p*100)+'%';if(t)setSt('#fSt',t)}
+async function readExcel(file){
+  await loadLib('xlsx');fProg(.3,'엑셀을 읽는 중…');
+  const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});const out=[];
+  wb.SheetNames.forEach(n=>{
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});let col=-1,start=0,bestN=0;
+    const countBelow=(ci,r0)=>rows.slice(r0).filter(r=>looksBook(String(r[ci]??''))).length;
+    for(let r=0;r<Math.min(rows.length,15);r++)rows[r].forEach((c,ci)=>{if(/독서활동/.test(String(c).replace(/\s/g,''))){const k=countBelow(ci,r+1);if(k>bestN){bestN=k;col=ci;start=r+1}}});
+    if(col<0){const cnt={};rows.forEach(r=>r.forEach((c,ci)=>{if(looksBook(String(c)))cnt[ci]=(cnt[ci]||0)+1}));const best=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];if(best==null)return;col=+best;start=0}
+    rows.slice(start).forEach(r=>{const v=String(r[col]??'').replace(/\s*\n\s*/g,' ').trim();if(v&&looksBook(v))out.push(v)});
+  });
+  return out;
+}
+async function readPdf(file){
+  await loadLib('pdf');pdfjsLib.GlobalWorkerOptions.workerSrc=LIBS.pdfw;
+  const doc=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;let lines=[];
+  for(let p=1;p<=doc.numPages;p++){
+    fProg(p/doc.numPages*.9,`PDF ${p}/${doc.numPages}쪽 읽는 중…`);
+    const tc=await (await doc.getPage(p)).getTextContent();const rows=[];
+    tc.items.forEach(it=>{if(!it.str.trim())return;const y=it.transform[5],x=it.transform[4],fs=Math.abs(it.transform[0])||it.height||10;let row=rows.find(r=>Math.abs(r.y-y)<fs*.4);if(!row)rows.push(row={y,items:[]});row.items.push({x,w:it.width||0,fs,s:it.str})});
+    rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
+    /* 독서활동상황 칸의 왼쪽 경계를 찾아 옆 칸(학년·번호 등)을 뺀다 */
+    const starts={};rows.forEach(r=>{const t=r.items.map(i=>i.s).join('');if(!/[()]/.test(t))return;const f=r.items.find(i=>!/^\s*\d{0,2}\s*$/.test(i.s));if(f){const k=Math.round(f.x/4)*4;starts[k]=(starts[k]||0)+1}});
+    const x0=Object.keys(starts).sort((a,b)=>starts[b]-starts[a])[0];
+    rows.sort((a,b)=>b.y-a.y).forEach(r=>{let t='',prev=null;r.items.filter(i=>x0==null||i.x>=+x0-4||/독서|활동|상황/.test(i.s)).forEach(i=>{if(prev){const gap=i.x-(prev.x+prev.w);if(gap>prev.fs*.18)t+=' '}t+=i.s;prev=i});lines.push(t)});
+  }
+  return toStudentLines(afterHeader(lines));
+}
+async function readImage(file){
+  await loadLib('ocr');fProg(.05,'글자 인식 준비 중… (처음엔 1분 정도 걸릴 수 있어요)');
+  const r=await Tesseract.recognize(file,'kor+eng',{logger:m=>{if(m.status==='recognizing text')fProg(.1+m.progress*.9,`글자 읽는 중… ${Math.round(m.progress*100)}%`);else if(/load/.test(m.status))fProg(.08,'한글 인식 자료 내려받는 중…')}});
+  return toStudentLines(afterHeader(r.data.text.split('\n')));
+}
+async function handleFile(file){
+  if(!file)return;
+  const name=file.name||'파일',ext=name.split('.').pop().toLowerCase();
+  $('#dzMsg').innerHTML=`<b>${esc(name)}</b> · 다른 파일을 쓰려면 여기를 눌러 주세요.<br><strong>학생 이름은 가리고 올려 주세요.</strong>`;
+  $('#fOut').classList.add('hide');$('#fActs').classList.add('hide');$('#fPrev').classList.add('hide');fProg(0,'읽는 중…');
+  try{
+    let lines;
+    if(/^(xlsx|xls|csv)$/.test(ext))lines=await readExcel(file);
+    else if(ext==='pdf'||file.type==='application/pdf')lines=await readPdf(file);
+    else if(/^image\//.test(file.type)){const u=URL.createObjectURL(file);$('#fPrev').innerHTML=`<img alt="올린 사진" src="${u}">`;$('#fPrev').classList.remove('hide');lines=await readImage(file)}
+    else throw new Error('사진(JPG·PNG), PDF, 엑셀(xlsx·xls·csv)만 읽을 수 있어요.');
+    fProg(1,lines.length?`${lines.length}명(줄)을 읽었어요. 내용을 확인하고 고친 뒤 보내 주세요.`:'독서활동상황으로 보이는 내용을 찾지 못했어요. 아래 칸에 직접 넣어 주세요.');
+    $('#fOut').value=lines.join('\n');$('#fOut').classList.remove('hide');$('#fActs').classList.remove('hide');
+  }catch(e){fProg(0,e.message)}
+}
 /* ---------- 창·메뉴 ---------- */
 function modal(title,html){$('#mTitle').textContent=title;$('#mBody').innerHTML=html;$('#modal').classList.add('show')}
 function closeModal(){$('#modal').classList.remove('show')}
@@ -441,6 +516,10 @@ $('#fltC').addEventListener('click',()=>{onlyBad=!onlyBad;$('#fltC').textContent
 $('#fixAll').addEventListener('click',fixAll);
 $('#tDirect').addEventListener('click',()=>{$('#tDirect').classList.add('on');$('#tFile').classList.remove('on');$('#pDirect').classList.remove('hide');$('#pFile').classList.add('hide')});
 $('#tFile').addEventListener('click',()=>{$('#tFile').classList.add('on');$('#tDirect').classList.remove('on');$('#pFile').classList.remove('hide');$('#pDirect').classList.add('hide')});
+$('#fIn').addEventListener('change',e=>handleFile(e.target.files[0]));
+const dz=$('#dz');['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('over')}));dz.addEventListener('drop',e=>handleFile(e.dataTransfer.files[0]));
+$('#fSend').addEventListener('click',()=>{const v=$('#fOut').value.trim();if(!v){setSt('#fSt','보낼 내용이 없어요.');return}$('#inC').value=v;$('#tDirect').click();setSt('#stC','파일에서 읽은 목록을 넣었어요. ♥ 점검!을 눌러 주세요.')});
+$('#fAgain').addEventListener('click',()=>$('#fIn').click());
 $('#mClose').addEventListener('click',closeModal);
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();$('#drop').classList.add('hide')}});
